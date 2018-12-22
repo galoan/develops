@@ -1,0 +1,109 @@
+/*
+Процедура разработана для интеграции SL с 1С. 
+ВАЖНО! В процедуре используются инструкции INSERT/UPDATE. Перед выполнением необходимо ознакомиться с текстом процедуры.
+Добавляются данные в договора поставщиков и контрагентов.
+INSERT в таблицу vend_lcr, cust_lcr.
+Дата разработки: 04.2017
+Разработал: Галахов О.
+Последнее обновление: 
+*/
+
+ALTER PROCEDURE RPZ_Scribe_Imp_Vend_Lcr  
+  (  
+--  DECLARE  
+  @curr_code  CurrCodeType	= NULL --'RUB'   
+  ,@lcr_num VendLcrNumType	= NULL --'Н1704/2841/1'  
+  ,@stat   LcrStatusType	= NULL  
+  ,@lcr_amt   AmountType	= NULL --0  
+  ,@RUS_grp_code SiteGroupType = NULL --'А0005708'  
+  ,@IssueData  DateType		= NULL --'2017/01/01' --'2017-01-01 00:00:00'  
+  ,@ExpDate   DateType		= NULL  
+  ,@RUSDescrVendLcr RUSExtName1Type = NULL  
+  ,@Type	 NVARCHAR 	= NULL --V - Поставщик, C - Клиент  
+  ,@ReturnError  NVARCHAR(MAX) OUTPUT   
+  )  
+  AS  
+    
+  DECLARE --@ReturnError NVARCHAR(MAX)  
+    @Vend_num VendNumType  
+    ,@cust_num CustNumType
+    
+  /*Проверка если не задан grp_code и curr_code(группа контрагента, валюта)*/  
+    
+  IF @curr_code IS NULL OR @RUS_grp_code IS NULL OR @IssueData IS NULL
+  BEGIN  
+  SET @ReturnError = 'Не задана группа контрагента, валюта или дата открытия договора';  
+  END  
+    
+  ELSE   
+  BEGIN   
+ 
+  /*Поиск поставщика*/  
+  SELECT @Vend_num = vd.vend_num FROM dbo.vendaddr vda INNER JOIN dbo.vendor vd   
+                ON vd.vend_num   = vda.vend_num   
+                AND vda.RUS_grp_code = @RUS_grp_code  
+                AND vd.curr_code  = @curr_code  
+  --SELECT @Vend_num  
+  /*--------------------*/  
+  /*Поиск клиента*/
+  
+  SELECT @cust_num=cu.cust_num FROM   dbo.customer cu INNER JOIN dbo.custaddr ca ON cu.cust_num		= ca.cust_num 
+																				AND ca.RUS_grp_code = @RUS_grp_code
+																				AND ca.curr_code	= @curr_code
+	--SELECT @cust_num
+  /*--------------*/  
+  
+  IF @Vend_num IS NULL or @cust_num IS NULL   
+  BEGIN    
+  SET @ReturnError = 'Не существует постащика или клиента';    
+  END    
+  ELSE    
+  BEGIN    
+      
+  BEGIN TRY  
+    
+  IF  @Type = 'V' AND @Vend_num  IS NOT NULL  
+  BEGIN  
+  INSERT INTO [dbo].[vend_lcr]    
+           ([vend_num]    
+           ,[vend_lcr_num]    
+           ,[curr_code]    
+           ,[stat]    
+           ,[lcr_amt]    
+           ,[issue_date]    
+           ,[exp_date]    
+           --,[confrm]    
+           ,[RUSDescriptionVendLcr])    
+     VALUES    
+           (@Vend_num    
+           ,@lcr_num    
+           ,@curr_code    
+           ,ISNULL(@stat,'O')    
+           ,@lcr_amt    
+           ,@IssueData    
+           ,ISNULL(@ExpDate, CAST('2999-01-01' AS DATETIME))    
+           ,@RUSDescrVendLcr    
+           )    
+  END  
+    
+  IF @Type = 'C' AND @cust_num IS NOT NULL  
+  BEGIN  
+  INSERT INTO dbo.cust_lcr   
+       (  
+        cust_num, lcr_num, curr_code, stat, lcr_amt, issue_date, exp_date, RUSDescriptionVendLcr  
+       )  
+       VALUES  
+       (  
+        @cust_num, @lcr_num, @curr_code, ISNULL(@stat,'O'), 9999999999, @IssueData, ISNULL(@ExpDate, CAST('2999-01-01' AS DATETIME)), @RUSDescrVendLcr       
+       )  
+  END  
+              
+  SET @ReturnError = CAST(@@ERROR AS NVARCHAR)    
+  END TRY    
+  BEGIN CATCH     
+  SET @ReturnError = CAST(@@ERROR AS NVARCHAR)+' '+ERROR_MESSAGE()    
+  END CATCH;     
+  END    
+  END    
+    
+  --SELECT @ReturnError
