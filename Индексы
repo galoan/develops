@@ -1,0 +1,96 @@
+DECLARE @minRows int
+		,@MaxRows INT
+		,@StartDate DATETIME
+		,@EndDate	DATETIME
+		,@RezTime	FLOAT
+		,@Numb		NVARCHAR(4000)
+
+set @minRows = 100000
+SET @MaxRows = 5000000
+
+
+declare @reindexQuery nvarchar(max)
+		,@EXEC NVARCHAR(MAX)
+		,@idxname sysname
+		,@scname  sysname
+		,@tname	  sysname
+		,@stavg   float
+
+declare Curreindex CURSOR LOCAL STATIC FOR
+
+select --top 1
+
+idx.name
+,sc.name
+,t.name
+,st.avg_fragmentation_in_percent
+
+--'BEGIN TRY ALTER INDEX '+idx.name+' ON '+ sc.name+'.'+ t.name+
+
+--CASE
+
+--WHEN st.avg_fragmentation_in_percent > 30 THEN ' REBUILD WITH (ONLINE=OFF) END TRY BEGIN CATCH ALTER INDEX '+idx.name+' ON '+ sc.name+'.'+ t.name+ ' REBUILD WITH (ONLINE=OFF) END CATCH;'
+
+--ELSE ' REORGANIZE END TRY BEGIN CATCH END CATCH;'
+
+--END --as query
+
+ 
+
+from sys.dm_db_index_physical_stats( DB_ID(),NULL,NULL,NULL,NULL) st
+
+join sys.tables t on (st.object_id=t.object_id)
+
+join sys.schemas sc on (sc.schema_id=t.schema_id)
+
+join sys.indexes idx on (t.object_id=idx.object_id and st.index_id=idx.index_id)
+
+join sys.partitions p on (p.index_id=idx.index_id and p.object_id=idx.object_id)
+
+where p.rows > @minRows -- > @minRows --BETWEEN @minRows AND @MaxRows
+and st.avg_fragmentation_in_percent > 90
+
+order by st.avg_fragmentation_in_percent desc
+
+
+OPEN Curreindex
+WHILE 1=1
+     BEGIN		
+		FETCH Curreindex INTO @idxname, @scname, @tname, @stavg
+		IF @@FETCH_STATUS <> 0 BREAK
+		
+		IF @idxname IS NOT NULL AND @scname IS NOT NULL AND @tname IS NOT NULL AND @stavg IS NOT NULL 
+		
+		BEGIN
+		
+		SET @StartDate = GETDATE()
+
+		SET @EXEC = 'BEGIN TRY ALTER INDEX '+@idxname+' ON '+ @scname+'.'+ ISNULL(@tname,'')+
+
+			CASE
+			WHEN @stavg > 30 THEN ' REBUILD WITH (ONLINE=OFF) END TRY BEGIN CATCH ALTER INDEX '+@idxname+' ON '+ @scname+'.'+ @tname+ ' REBUILD WITH (ONLINE=OFF) END CATCH;'
+			ELSE ' REORGANIZE END TRY BEGIN CATCH END CATCH;'
+			END
+		
+		PRINT @EXEC
+		
+		--EXECUTE sp_executesql @EXEC
+		
+		SET @EndDate = GETDATE()
+		
+		/*
+		SET @Numb = '@idxname='+ISNULL(CAST(@idxname AS NVARCHAR),'')+'; @tname='+ISNULL(CAST(@tname AS NVARCHAR(MAX)),'')+
+			'; @stavg='+ISNULL(CAST(@stavg AS NVARCHAR(MAX)),'')+'; @StartDate='+ISNULL(CAST(@StartDate AS NVARCHAR(MAX)),'')
+
+		EXEC dbo.RPZ_sp_ADDRPZ_Integrated 
+		@Name		= 'RPZ_ALTERINDEX'
+		,@Status	= 'Индексы'
+		,@Numb		= @Numb
+		*/
+
+		END
+		
+     END
+     
+close Curreindex
+deallocate Curreindex
