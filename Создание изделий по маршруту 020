@@ -1,0 +1,455 @@
+	/*
+	Создание изделий из SCMO по маршруту 020. 
+	*/
+
+	CREATE PROCEDURE RPZ_sp_Item_SCMO_SL 
+	
+	AS
+	
+	IF OBJECT_ID('tempdb..#SCMO_Vjobstep') IS NOT NULL DROP TABLE #SCMO_Vjobstep
+	
+	SELECT *
+	INTO #SCMO_Vjobstep 
+	--FROM OPENDATASOURCE('SQLOLEDB','Data Source=;uid=;pwd=').base.dbo._RPZ_VItem_Jobrout_SL vj --Тестовый
+	FROM OPENDATASOURCE('SQLOLEDB','Data Source=;uid=;pwd=').base.dbo._RPZ_VItem_Jobrout_SL vj --Рабочий
+	--WHERE s2name = '020'
+	
+
+	--Выбираю изделия которых нет в SL
+	
+	DECLARE
+	  @WEIGHT_UNITS		WeightUnitsType
+	, @COST_TYPE		CostTypeType
+	, @STOCKED			ListYesNoType
+	, @ISSUE_BY			ListLocLotType
+	, @COST_METHOD		CostMethodType
+	, @ABC_CODE			AbcCodeType
+	, @PROD_TYPE		ProdTypeType
+	, @BACKFLUSH		ListYesNoType
+	, @ItemTaxCode1		TaxCodeType
+	, @Sequence			JobmatlSequenceType
+	, @Alt_Group		JobmatlSequenceType
+	, @Cntrl_Point		ListYesNoType
+	, @Severity			int
+	, @Job				JobType
+	, @Suffix			SuffixType
+	, @JobPrefix		JobPrefixType
+	, @DefWhse			WhseType
+	, @Item				ItemType
+	, @LotPrefix		LotPrefixType
+	, @LotTracked		ListYesNoType
+	, @SerialTracked	ListYesNoType
+	, @SerialPrefix		SerialPrefixType
+	, @CostType			CostTypeType
+	, @IssueBy			ListLocLotType
+	, @error			INT = 0
+	, @Log				NVARCHAR(4000) = ''
+
+	SELECT 
+	  @WEIGHT_UNITS = 'кг'
+	, @COST_TYPE = 'S'
+	, @STOCKED = 1
+	, @ISSUE_BY = 'LOT'
+	, @COST_METHOD = 'C'
+	, @ABC_CODE = 'C'
+	, @PROD_TYPE = 'J'
+	, @BACKFLUSH = 0
+	
+	SELECT
+			@ItemTaxCode1 = item_tax_code
+	FROM tax_system
+	WHERE tax_system = 1
+	
+	SELECT
+			  @JobPrefix     = cwo_prefix
+			, @DefWhse       = def_whse
+			, @LotTracked    = lot_tracking
+			, @LotPrefix     = lot_prefix
+			, @IssueBy       = issue_by
+			, @SerialTracked = serial_tracked
+			, @SerialPrefix  = serial_prefix
+			, @CostType      = cost_type
+	FROM invparms
+	
+	
+	DECLARE @name nvarchar(30)
+			, @uiname nvarchar(8)
+			, @gname  NVARCHAR(8)
+			, @descr  NVARCHAR(40)
+
+	DECLARE CurItem CURSOR LOCAL STATIC FOR
+	
+	SELECT --TOP 1 
+			vj.name
+			, vj.uiname
+			, vj.gname
+			-------------------
+			, vj.descr
+	FROM #SCMO_Vjobstep vj LEFT JOIN dbo.item i ON vj.name = i.item
+	WHERE i.item IS NULL
+	AND vj.Number <> 200
+	AND LEN(vj.name) <= 30
+
+	OPEN CurItem
+	WHILE 1=1
+		 BEGIN		
+			FETCH CurItem INTO @name, @uiname, @gname, @descr
+			IF @@FETCH_STATUS <>0 BREAK
+			
+			BEGIN TRY 
+			
+			INSERT INTO dbo.item (item, u_m, product_code, stocked, abc_code, prod_type, backflush, 
+				  weight_units, cost_type, cost_method, issue_by, tax_code1 , description, RUSExtDescription)
+				   VALUES (
+						    @name
+						  , @uiname
+						  , @gname
+						  , @STOCKED
+						  , @ABC_CODE
+						  , @PROD_TYPE
+						  , @BACKFLUSH
+						  , @WEIGHT_UNITS 
+						  , CASE WHEN @gname in ('0001', '0002', '0003') THEN 'A' ELSE @COST_TYPE END
+					      , CASE WHEN @gname in ('0001', '0002', '0003') THEN 'A' ELSE @COST_METHOD END 
+						  , COALESCE(@IssueBy, @ISSUE_BY)
+						  , @ItemTaxCode1
+						  , @descr
+						  , @descr
+						  )
+			END TRY                
+			BEGIN CATCH                
+			SET @error = @@ERROR
+			--SELECT ERROR_MESSAGE()	
+			END CATCH;  
+			
+			--SELECT @error
+			
+				--Если ошибка добавления то дальше не обрабатываю
+				IF @error = 0
+				BEGIN
+				 --Добавляю техмаршрут------------
+				UPDATE i SET i.Uf_TexMar = REPLACE(vj.plant_route,'=',''),
+							 i.datefld = GETDATE() 
+				FROM #SCMO_Vjobstep vj INNER JOIN dbo.item i ON vj.name = i.item
+				WHERE i.Uf_TexMar IS NULL
+				--AND vj.Number <> 200	
+				AND i.item = @name 
+				----------------------------------
+				
+				--------Добавляю склад 220------------------------
+				BEGIN TRY
+				
+				INSERT INTO dbo.itemwhse (
+															   [item]
+															  ,[whse]
+															  ,[qty_on_hand]
+															  ,[qty_alloc_co]
+															  ,[alloc_trn]
+															  ,[qty_trans]
+															  ,[qty_ordered]
+															  ,[qty_mrb]
+															  ,[qty_sold_ytd]
+															  ,[qty_pur_ytd]
+															  ,[trn_in_ytd]
+															  ,[trn_out_ytd]
+															  ,[qty_reorder]
+															  ,[sales_ytd]
+															  ,[sales_ptd]
+															  ,[cycle_freq] --16
+															  ,[last_cycle]
+															  ,[cnt_in_proc]
+															  ,[cycle_flag]
+															  ,[cycle_type]
+															  ,[phy_inv_qty]
+															  ,[phy_inv_dte]
+															  ,[qty_wip]
+															  ,[qty_rsvd_co]
+															  ,[replen_po_num]
+															  ,[replen_ps_num]
+															  ,[replen_trn_num]
+															  ,[RUS_is_default_whse]
+															  ,[count_sequence]
+															  ,[last_count_qty_on_hand]
+															  ,[RUS_dev_proc]
+																)
+										VALUES
+																(
+																@name
+																,'220'
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0
+																,0 --16
+																,NULL
+																,0
+																,0
+																,NULL
+																,0
+																,NULL
+																,0
+																,0
+																,NULL
+																,NULL
+																,NULL
+																,0
+																,2
+																,0
+																,NULL
+																
+																)
+					END TRY                
+					BEGIN CATCH                
+					SET @error = @@ERROR			
+					END CATCH;  
+				---------Добавляю МС----------------------------------
+					IF @error = 0
+					BEGIN
+					
+											BEGIN TRY
+												INSERT dbo.itemloc
+													([item], [whse], [qty_on_hand], [NewRank], [loc], [loc_type], [mrb_flag], [perm_flag], [unit_cost], [matl_cost], [lbr_cost]
+													, [fovhd_cost], [vovhd_cost], [out_cost], [inv_acct], [inv_acct_unit1], [inv_acct_unit2], [inv_acct_unit3], [inv_acct_unit4]
+													, [lbr_acct], [lbr_acct_unit1], [lbr_acct_unit2], [lbr_acct_unit3], [lbr_acct_unit4], [fovhd_acct], [fovhd_acct_unit1], [fovhd_acct_unit2]
+													, [fovhd_acct_unit3], [fovhd_acct_unit4], [vovhd_acct], [vovhd_acct_unit1], [vovhd_acct_unit2], [vovhd_acct_unit3], [vovhd_acct_unit4]
+													, [out_acct], [out_acct_unit1], [out_acct_unit2], [out_acct_unit3], [out_acct_unit4], [qty_rsvd], [wc], [rank], [RowPointer]
+													) 
+												VALUES 
+													(@name, '220', 0, 
+													(SELECT ISNULL(MAX(il.rank),0)+1 FROM dbo.itemloc il WHERE il.item = @name AND il.whse = '220' AND il.loc <> 'STOCK' )
+													, '2200Т'
+													, N'S'
+													, 1, 1, 0, 0, 0, 0
+													, 0, 0, N'999999', NULL, NULL, NULL, NULL, N'999999', NULL
+													, NULL, NULL, NULL, N'999999', NULL, NULL, NULL, NULL
+													, N'999999', NULL, NULL, NULL, NULL, N'999999', NULL, NULL, NULL
+													, NULL, 0, NULL, 
+													(SELECT ISNULL(MAX(il.rank),0)+1 FROM dbo.itemloc il WHERE il.item = @name AND il.whse = '220' AND il.loc <> 'STOCK' )
+													, NEWID()
+													)
+													------
+												INSERT dbo.itemloc
+													([item], [whse], [qty_on_hand], [NewRank], [loc], [loc_type], [mrb_flag], [perm_flag], [unit_cost], [matl_cost], [lbr_cost]
+													, [fovhd_cost], [vovhd_cost], [out_cost], [inv_acct], [inv_acct_unit1], [inv_acct_unit2], [inv_acct_unit3], [inv_acct_unit4]
+													, [lbr_acct], [lbr_acct_unit1], [lbr_acct_unit2], [lbr_acct_unit3], [lbr_acct_unit4], [fovhd_acct], [fovhd_acct_unit1], [fovhd_acct_unit2]
+													, [fovhd_acct_unit3], [fovhd_acct_unit4], [vovhd_acct], [vovhd_acct_unit1], [vovhd_acct_unit2], [vovhd_acct_unit3], [vovhd_acct_unit4]
+													, [out_acct], [out_acct_unit1], [out_acct_unit2], [out_acct_unit3], [out_acct_unit4], [qty_rsvd], [wc], [rank], [RowPointer]
+													) 
+												VALUES 
+													(@name, '220', 0, 
+													(SELECT ISNULL(MAX(il.rank),0)+1 FROM dbo.itemloc il WHERE il.item = @name AND il.whse = '220' AND il.loc <> 'STOCK' )
+													, 'Т220'
+													, N'S'
+													, 0, 1, 0, 0, 0, 0
+													, 0, 0, N'999999', NULL, NULL, NULL, NULL, N'999999', NULL
+													, NULL, NULL, NULL, N'999999', NULL, NULL, NULL, NULL
+													, N'999999', NULL, NULL, NULL, NULL, N'999999', NULL, NULL, NULL
+													, NULL, 0, NULL, 
+													(SELECT ISNULL(MAX(il.rank),0)+1 FROM dbo.itemloc il WHERE il.item = @name AND il.whse = '220' AND il.loc <> 'STOCK' )
+													, NEWID()
+													)
+												END TRY       
+												BEGIN CATCH          
+												 
+												SET @error = @@ERROR         
+												        
+												END CATCH;
+												
+												IF @error = 0
+												BEGIN
+													BEGIN TRY
+													--Удаляю STOCK
+													DELETE il 
+													FROM dbo.itemloc il WHERE il.whse = '220' AND il.loc = 'STOCK' AND qty_on_hand = 0 AND il.NewRank = 1 AND il.item = @name
+													END TRY       
+													BEGIN CATCH          
+													 
+													SELECT @@ERROR         
+													        
+													END CATCH;
+												END
+					
+					END
+				------------------------------------------------------
+				
+				-----------------------------------------------
+				
+				END
+			/*Лог по загруженным изделиям*/
+			
+			DECLARE @Numb NVARCHAR(4000)        
+				   --,@return_value INT        
+				           
+				 SET @Numb = 'Item = ' + ISNULL(@name,'')
+				        
+				 EXEC dbo.RPZ_sp_ADDRPZ_Integrated         
+				   @Name  = 'RPZ_sp_Item_SCMO_SL'        
+				  ,@Status = 'Загружено из SCMO'        
+				  ,@Numb  = @Numb
+			
+			/*----------------------------*/
+			
+			
+		 END
+	     
+	CLOSE CurItem
+	DEALLOCATE CurItem
+	
+
+	-----------------------------------
+	
+	--Выбираю изделия в которых не заполнены операции
+	
+	SELECT TOP 100 * 
+	FROM dbo.item i INNER JOIN #SCMO_Vjobstep vj ON i.item = vj.name
+					LEFT  JOIN dbo.job j ON i.job = j.job AND i.suffix = j.suffix
+					LEFT  JOIN dbo.jobroute jr ON jr.job = j.job AND jr.suffix = j.suffix 
+					
+	WHERE i.job IS NULL
+	  AND jr.job IS NULL
+	
+	-------------------------------------------------
+	
+	--SELECT * FROM #SCMO_Vjobstep
+	
+	--Курсор по добавлению Операций
+	DECLARE @itemOper NVARCHAR(50)
+			, @wcname NVARCHAR(15)
+			, @Number INT
+			, @NumJob NVARCHAR(20)
+
+	DECLARE CurOper CURSOR LOCAL STATIC FOR
+	
+	SELECT --TOP 1 
+			i.item, vj.wcname, vj.Number 
+	FROM dbo.item i INNER JOIN #SCMO_Vjobstep vj ON i.item = vj.name
+					LEFT  JOIN dbo.job j ON i.job = j.job AND i.suffix = j.suffix
+					LEFT  JOIN dbo.jobroute jr ON jr.job = j.job AND jr.suffix = j.suffix 
+					
+	WHERE i.job IS NULL
+	  AND jr.job IS NULL
+
+	OPEN CurOper
+	WHILE 1=1
+		 BEGIN		
+			FETCH CurOper INTO @itemOper, @wcname, @Number
+			IF @@FETCH_STATUS <> 0 BREAK
+			
+			/*Нахожу максимальный номер по типу S (в job) и генерирую новый номер */
+			SELECT @NumJob = CAST(CAST(MAX(job) AS DECIMAL(18,0))+1 AS NVARCHAR(20)) FROM dbo.job WHERE TYPE = 'S'	
+			/*------------------------------------------------------------*/
+			IF EXISTS (SELECT 1 FROM dbo.item i WHERE i.item = @itemOper AND i.job IS NULL) --Если job не привязан к item
+			BEGIN
+			
+			BEGIN TRAN
+			INSERT INTO dbo.job (job, stat, suffix, item,  type, qty_released) 
+				 VALUES (@NumJob, 'F', 0, @itemOper, 'S',1)
+			COMMIT TRAN
+			
+			
+			/*--------Связываю изделие с ЗНП-------*/
+			
+			UPDATE i SET i.job = @NumJob , i.suffix = 0 FROM dbo.item i WHERE i.item = @itemOper
+			
+			/*-------------------------------------*/
+			END
+			ELSE 
+			BEGIN
+			SELECT @NumJob = i.job FROM dbo.item i WHERE i.item = @itemOper AND i.job IS NOT NULL 
+			END
+			
+			/*Записываю операции*/
+		BEGIN TRY
+			INSERT [jobroute] (
+				[oper_num]
+				, [suffix]
+				, [job]
+				, [run_basis_lbr]
+				, [run_basis_mch]
+				, [wc]
+				, [RUSshrink_fact]
+				, [cntrl_point]
+				, [bflush_type]
+				, [efficiency]
+				, [setup_rate]
+				, [run_rate_lbr]
+				, [vovhd_rate_mch]
+				, [fovhd_rate_mch]
+				, [varovhd_rate]
+				, [fixovhd_rate]
+				, [RowPointer]
+				, [RUSZahod]
+					)
+				VALUES
+				(
+				@Number,
+				0,
+				@NumJob,
+				N'H',
+				N'H',
+				@wcname,--N'RC2698',
+				0,
+				1,
+				N'L', --[bflush_type]
+				100,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				NEWID(),
+				'1'
+				)
+		
+			---------------------
+		END TRY       
+		BEGIN CATCH          
+													 
+		SELECT @@ERROR         
+													        
+		END CATCH;
+		
+						BEGIN TRY
+								INSERT [jrtresourcegroup] (
+											[rgid]
+											, [oper_num]
+											, [suffix]
+											, [job]
+											, [qty_resources]
+											, [resactn]
+											, [RowPointer]
+											)
+								 VALUES		(
+											'GR'+SUBSTRING(@wcname,3,(LEN(@wcname)))  --@Rgid
+											, @Number
+											, 0 --[suffix]
+											, @NumJob
+											, 1
+											, N'S'
+											, NEWID()
+											)
+								END TRY       
+								BEGIN CATCH          
+																			 
+								SELECT @@ERROR         
+																			        
+								END CATCH;	
+								
+				--Расчёт нормативной стоимости
+				EXEC Rpt_RollCurrentCosttoStandardCostSp 1,NULL,NULL, @itemOper, @itemOper, PMT, ABC, ALFSC, MTFO, 1, 4				
+				------------------------------		
+		 END
+	     
+	CLOSE CurOper
+	DEALLOCATE CurOper	
+---------
