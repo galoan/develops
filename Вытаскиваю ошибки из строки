@@ -1,0 +1,10 @@
+SELECT	REPLACE((SUBSTRING(ri.rpz_Numb, PATINDEX('%@trn_num=%', ri.rpz_Numb), PATINDEX('%; @trn_line%', ri.rpz_Numb) - PATINDEX('%@trn_num=%', ri.rpz_Numb) )), '@trn_num=', '') AS Перемещение
+			,REPLACE((SUBSTRING(ri.rpz_Numb, PATINDEX('%; @trn_line=%', ri.rpz_Numb), PATINDEX('%; @locV%', ri.rpz_Numb) - PATINDEX('%; @trn_line=%', ri.rpz_Numb) )), '; @trn_line=', '') AS НомерСтроки				 
+			,REPLACE((SUBSTRING(ri.rpz_Numb, PATINDEX('%; @Infobar=%', ri.rpz_Numb), PATINDEX('%; @return_value%', ri.rpz_Numb) - PATINDEX('%; @Infobar=%', ri.rpz_Numb) )), '; @Infobar=', '') AS Ошибка				 
+	INTO #TblRez1		
+	FROM dbo.RPZ_Integrated ri 
+	WHERE rpz_NameIns LIKE 'RPZ_sp_TransferOrderShipSpVozvrat'
+					  AND rpz_Numb NOT LIKE '%@return_value=0%'
+	ORDER BY CreateDate DESC
+
+	SELECT Перемещение, НомерСтроки, Ошибка FROM #TblRez1 WHERE SUBSTRING(Ошибка,1,6) <> '[Post]'
