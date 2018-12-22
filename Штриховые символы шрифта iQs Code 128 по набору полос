@@ -1,0 +1,52 @@
+----Штриховые символы шрифта iQs Code 128 по набору полос
+/*
+За основу взята функция VB 'Code_Char'
+goa,5062017
+*/
+ALTER FUNCTION Code_Char(
+@A NVARCHAR(4000)
+ ) 
+ RETURNS NVARCHAR(4000)
+ AS 
+ BEGIN
+ DECLARE @S NVARCHAR(4000) 
+	 ,@Sd NVARCHAR(4000)
+     ,@i Int = 0
+     ,@B NVARCHAR(4000)
+     --,@A NVARCHAR(4000) = '113222'
+     ,@Code_Char NVARCHAR(4000)
+     
+    Select @S = Case WHEN @A = '211412' THEN 'A'  
+		   WHEN @A = '211214' THEN 'B'  
+		   WHEN @A = '211232' THEN 'C'  
+		   WHEN @A = '2331112' THEN '@' ELSE '' END
+		
+        WHILE @i <= Len(@A) / 2 - 1
+        BEGIN
+            Select @Sd=Case WHEN (SUBSTRING(@A, 2 * @i + 1, 2)) = '11' THEN @S+'0'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '21' THEN @S+'1'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '31' THEN @S+'2'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '41' THEN @S+'3'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '12' THEN @S+'4'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '22' THEN @S+'5'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '32' THEN @S+'6'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '42' THEN @S+'7'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '13' THEN @S+'8'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '23' THEN @S+'9'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '33' THEN @S+':'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '43' THEN @S+';'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '14' THEN @S+'<'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '24' THEN @S+'='
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '34' THEN @S+'>'
+                WHEN (SUBSTRING(@A, 2 * @I + 1, 2)) = '44' THEN @S+'?'
+                END
+         
+		SELECT @S = CASE WHEN @Sd IS NOT NULL THEN @Sd ELSE @S END
+		
+        SET @i = @i+1
+       END
+		
+    SET @Code_Char = @S
+    --SELECT @Code_Char
+	RETURN @Code_Char
+	END
