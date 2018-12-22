@@ -1,0 +1,44 @@
+ALTER TRIGGER [dbo].[RPZ_Scribe_Nomenklature] ON [dbo].[item]
+FOR INSERT,UPDATE
+AS
+
+DECLARE
+  @Item  ItemType
+, @ItemD ItemType   
+, @HasInserted TINYINT
+, @HasDeleted TINYINT
+, @MonitoredColBits bigint
+, @Mode varchar(20)
+
+SELECT
+  @HasInserted = CASE WHEN EXISTS (SELECT 1 FROM inserted) THEN 1 ELSE 0 END
+, @HasDeleted  = CASE WHEN EXISTS (SELECT 1 FROM deleted) THEN 1 ELSE 0 END
+
+IF @HasInserted + @HasDeleted = 2
+   SET @Mode = 'UPDATE'
+ELSE IF @HasInserted = 1
+   SET @Mode = 'INSERT'
+ELSE
+   SET @Mode = 'DELETE'
+   
+SELECT @Item = item FROM inserted GROUP BY item
+SELECT @ItemD = item FROM deleted GROUP BY item 
+
+IF @Mode <> 'DELETE' AND NOT (@Mode = 'UPDATE')
+BEGIN
+
+EXEC RPZ_Scribe_NomenklatureProc @Item,'I'
+END
+
+ELSE IF @Mode <> 'DELETE' AND (@Mode = 'UPDATE' )
+BEGIN
+ IF 
+		   UPDATE (item)		OR
+		   UPDATE (description)		OR
+		   UPDATE (RUSExtDescription)		OR
+		   UPDATE (u_m)	OR
+		   UPDATE (product_code)		
+
+ EXEC RPZ_Scribe_NomenklatureProc @Item,'U'
+END
+
