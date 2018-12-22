@@ -1,0 +1,185 @@
+/*Строка штрих-кода в кодировке Code 128
+За основу взята функция VB Code_128
+goa,6062017
+*/
+CREATE FUNCTION Code_128
+(
+@A NVARCHAR(4000)
+) 
+RETURNS NVARCHAR(4000)
+AS
+BEGIN
+DECLARE
+	  @BCode INT = 0
+     ,@BInd  INT
+     ,@CurMode NVARCHAR(4000)
+     ,@Ch INT
+     ,@Ch2 INT
+     ,@I INT
+     ,@LenA INT
+     ,@CCode INT
+     ,@S NVARCHAR(4000)
+     ,@BarArray NVARCHAR(4000)
+     --,@A NVARCHAR(4000) ='D0001$N22621307$P1'
+
+DECLARE  @Table table(  
+    BInd INT,  
+    BVal INT,  
+    BCon INT  
+    ); 
+
+    --Собираем строку кодов
+    SET @BInd = 0
+    SET @CurMode = ''
+    SET @I = 1
+    SET @LenA = LEN(@A)
+	
+    WHILE @I <= @LenA-1
+    BEGIN
+
+        --Текущий символ в строке
+        SET @Ch = ASCII(SUBSTRING(@A, @I, 1))
+		
+        SET @I = @I + 1
+       
+        --Разбираем только символы от 0 до 127
+        If @Ch <= 127 --BEGIN
+        BEGIN 
+            --Следующий символ
+            If @I <= @LenA 
+            BEGIN
+            SET @Ch2 = ASCII(SUBSTRING(@A, @I, 1))
+        
+            END
+            ELSE
+            BEGIN
+               SET @Ch2 = 0
+            END 
+            --Пара цифр - режим С
+           -- SELECT CAST(@Ch AS NVARCHAR(MAX))+CAST(@Ch2 AS NVARCHAR(MAX))
+            IF (48 <= @Ch And @Ch <= 57 And 
+               48 <= @Ch2 And @Ch2 <= 57) 
+            BEGIN  
+		
+                SET @I = @I + 1
+                If @BInd = 0 BEGIN
+                    --Начало с режима С
+                    SET @CurMode = 'C'
+                    INSERT INTO @Table (BInd,BVal) VALUES (@BInd,105)
+                    --BCode(BInd) = 105
+                    SET @BInd = @BInd + 1
+                    END
+                IF @CurMode <> 'C' BEGIN
+                    --Переключиться на режим С
+                    SET @CurMode = 'C'
+                    INSERT INTO @Table (BInd,BVal) VALUES (@BInd,99)
+                    --BCode(BInd) = 99
+                    SET @BInd = @BInd + 1
+                END
+                --Добавить символ режима С
+                INSERT INTO @Table (BInd,BVal) VALUES (@BInd,(CAST(@Ch+@Ch2 AS INT)))
+                --BCode(BInd) = CInt(Chr(Ch) & Chr(Ch2))
+                SET @BInd = @BInd + 1
+            END
+          
+            ELSE
+            BEGIN
+				    
+                IF @BInd = 0 BEGIN 
+                    IF @Ch < 32 BEGIN	
+                        --Начало с режима A
+                       SET @CurMode = 'A'
+                       INSERT INTO @Table (BInd,BVal) VALUES (@BInd,103)
+                        --BCode(BInd) = 103
+                        SET @BInd = @BInd + 1
+                    END    
+                    ELSE
+                    BEGIN  
+                        --Начало с режима B
+                        SET @CurMode = 'B'
+                        INSERT INTO @Table (BInd,BVal) VALUES (@BInd,104)
+                        --BCode(BInd) = 104
+                        SET @BInd = @BInd + 1
+                    END 
+                END 
+                --Переключение по надобности в режим A
+                IF (@Ch < 32) And (@CurMode <> 'A') BEGIN  
+                    SET @CurMode = 'A'
+                    INSERT INTO @Table (BInd,BVal) VALUES (@BInd,101)
+                    --BCode(BInd) = 101
+                    SET @BInd = @BInd + 1
+                END
+                --Переключение по надобности в режим B
+                ELSE
+                IF ((64 <= @Ch) And (@CurMode <> 'B')) Or (@CurMode = 'C') BEGIN 
+                    SET @CurMode = 'B'
+                    INSERT INTO @Table (BInd,BVal) VALUES (@BInd,100)
+                    --BCode(BInd) = 100
+                    SET @BInd = @BInd + 1
+                END
+                --Служебные символы
+                IF (@Ch < 32) BEGIN  
+                INSERT INTO @Table (BInd,BVal) VALUES (@BInd,(@Ch + 64))
+                    --BCode(BInd) = Ch + 64
+                    SET @BInd = @BInd + 1
+                END
+                --Все другие символы
+                ELSE
+                INSERT INTO @Table (BInd,BVal) VALUES (@BInd,(@Ch - 32))
+                    --BCode(BInd) = Ch - 32
+                    SET @BInd = @BInd + 1
+                END
+             END
+         END
+      
+ 
+        --END 
+   
+    --Подсчитываем контрольную сумму
+   --SELECT @BCode
+   SELECT @BCode=BVal FROM @Table WHERE BInd = 0
+   SET @CCode = @BCode%103
+
+   SET @I = 1
+    WHILE @I  <= @BInd - 1
+        BEGIN
+        SELECT @BCode=BVal FROM @Table WHERE BInd = @I
+        SET @CCode = (@CCode + @BCode * @I) % 103
+       SET @I=@I+1 
+    END
+
+    INSERT INTO @Table (BInd,BVal) VALUES (@BInd,@CCode)
+    --BCode(BInd) = CCode
+    SET @BInd = @BInd + 1
+    --Завершающий символ
+    INSERT INTO @Table (BInd,BVal) VALUES (@BInd,106)
+    --BCode(BInd) = 106
+    SET @BInd = @BInd + 1
+    /*'Собираем строку символов шрифта
+    'BarArray = Array("155", "515", "551", "449", "485", "845", "458", "494", "854", _
+        "548", "584", "944", "056", "416", "452", "065", "425", "461", "560", "506", _
+        "542", "164", "524", "212", "245", "605", "641", "254", "614", "650", "119", _
+        "191", "911", "089", "809", "881", "098", "818", "890", "188", "908", "980", _
+        "01:", "092", "812", "029", "0:1", "821", "221", "182", "902", "128", "1:0", _
+        "122", "209", "281", ":01", "218", "290", ":10", "230", "5<0", ";00", "04=", _
+        "0<5", "40=", "4<1", "<05", "<41", "05<", "0=4", "41<", "4=0", "<14", "<50", _
+        "=40", "50<", "320", "=04", "830", "047", "407", "443", "074", "434", "470", _
+        "344", "704", "740", "113", "131", "311", "00;", "083", "803", "038", "0;0", _
+        "308", "380", "023", "032", "203", "302", "A", "B", "C", "@")*/
+    SET @S = ''
+    SET @I = 0
+    --SELECT @BInd
+    WHILE @I  <= @BInd - 1
+    BEGIN
+    SET @BCode = 0
+			--SELECT @I
+			SELECT @BCode=BVal FROM @Table WHERE  BInd = @I
+			--SELECT @BCode
+			SET @S = @S + dbo.Code_Char(dbo.Code_128_ID(@BCode))
+        -- SELECT @S
+        --SET @S = @S + BarArray(BCode(I))
+    SET @I = @I + 1
+    END
+     
+RETURN @S
+END
