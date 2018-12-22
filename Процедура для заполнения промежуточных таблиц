@@ -1,0 +1,137 @@
+/*====================================================================*/
+-- Author:		Галахов О.
+-- Create date: 20.03.2017
+-- Description:	Процедура для заполнения промежуточных таблиц
+-- используемых для обмена данными с 1С с использованием Scribe. Номенклатура(item)
+/*====================================================================*/
+ALTER PROCEDURE RPZ_Scribe_NomenklatureProc
+(
+--DECLARE
+	@Item ItemType = NULL --/*'000000009332'*/'7Ф1.620005-01'
+	,@Flag NVARCHAR(1) = NULL --'U' --I(Insert), U(Update), D(Delete), H(Hand)
+)
+AS
+
+	DECLARE @ProductCode ProductCodeType
+			,@GUID		 UNIQUEIDENTIFIER
+	
+	SET @GUID = NEWID()
+	
+	SELECT @ProductCode = product_code FROM dbo.RPZ_Scribe_NomenklatureView WHERE item = @Item 
+
+/*============Справочник "Номенклатурные группы"====================*/
+IF @ProductCode NOT IN ('0001','0002','0003')
+BEGIN
+INSERT INTO dbo.RPZ_Scribe_NomenklatureGroup (Kod,Name,BaseUnitMeasure,GUID,action)
+SELECT CASE WHEN @ProductCode IN ('501','502','503') THEN item 
+			WHEN REVERSE(SUBSTRING(REVERSE(item),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(item),4,LEN(item)))   
+			ELSE item 
+	   END AS Код
+	  ,CASE WHEN @ProductCode IN ('501','502','503') THEN item+'/'+description 
+			WHEN REVERSE(SUBSTRING(REVERSE(item),1,3)) = '_СН' THEN (REVERSE(SUBSTRING(REVERSE(item),4,LEN(item))))+'/'+description   
+			ELSE item+'/'+description 
+	   END AS Наименование
+	  ,CAST (OKEI_code AS NVARCHAR(3))
+	  ,@GUID
+	  ,@Flag		
+FROM dbo.RPZ_Scribe_NomenklatureView WHERE item = @Item
+
+/*================================================================*/
+/*==============Заполнение истории интеграции Ном. группы=========*/
+INSERT INTO dbo.RPZ_Integrated (rpz_NameIns,rpz_status,rpz_Guid,rpz_Numb)
+SELECT	'НоменклатурныеГруппы'
+		,'Выгружен в 1C'
+		,@GUID
+		,SUBSTRING(ISNULL(Kod,'')+';'+ISNULL(Name,'')+';'+ISNULL(BaseUnitMeasure,'')+';'+ISNULL(action,'')+';'+CAST(CreateDate AS NVARCHAR(30)),1,4000)
+FROM dbo.RPZ_Scribe_NomenklatureGroup WHERE Kod = @Item AND GUID = @GUID
+END
+/*===============================================================*/
+/*===============Справочник "Номенклатура"=======================*/
+INSERT INTO dbo.RPZ_Scribe_SpravNomenklature (Parent,Kod,NomenklGroup,NameDescription,FullNameDescription,
+											  BaseUnit,Tax_Code,WeightKoeffic,ViewNomenkl,Service,Komments,
+											  GUID,action)
+SELECT CASE WHEN product_code = '0001' THEN 'Г0000013'
+			WHEN product_code = '0002' THEN 'Г0000014'
+			WHEN product_code = '0003' THEN 'Г0000015'
+			WHEN product_code = '0004' THEN 'Г0000006'
+			WHEN product_code IN ('501','502','503') THEN CASE
+			WHEN REVERSE(SUBSTRING(REVERSE(item),1,4)) IN ('_ГР1', '_НД1','_НЭ1') THEN 'Г0000034' ELSE 'Г0000033' END
+			ELSE 'Г0000017'   
+	   END AS Родитель
+	  ,CASE WHEN product_code IN ('501','502','503') THEN item  
+			WHEN REVERSE(SUBSTRING(REVERSE(item),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(item),4,LEN(item)))
+			ELSE item
+	   END AS Код
+	  ,CASE WHEN product_code IN ('501','502','503') THEN item  
+	        WHEN REVERSE(SUBSTRING(REVERSE(item),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(item),4,LEN(item)))
+	        WHEN product_code NOT IN ('0001','0002','0003') THEN item ELSE product_code
+	   END AS НоменклатурнаяГруппа
+	  ,CASE WHEN product_code = '000Y' THEN description--+REVERSE(SUBSTRING(REVERSE(item),4,LEN(item))) 
+			WHEN REVERSE(SUBSTRING(REVERSE(description),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(description),4,LEN(description)))
+			ELSE description
+	   END AS Наименование
+	  ,CASE WHEN product_code = '000Y' THEN RUSExtDescription--+REVERSE(SUBSTRING(REVERSE(item),4,LEN(item))) 
+			WHEN REVERSE(SUBSTRING(REVERSE(RUSExtDescription),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(RUSExtDescription),4,LEN(RUSExtDescription)))
+			ELSE RUSExtDescription
+	   END AS НаименованиеПолное
+	  ,CAST(OKEI_code AS NVARCHAR(3)) AS БазоваяЕдиницаИзмерения
+	  ,SUBSTRING(tax_code1,1,5) AS СтавкаНДС
+	  ,1 AS ВесовойКоэффициентВхождения
+	  ,CASE WHEN product_code IN ('0001','0002') THEN '000000002'
+			WHEN product_code = '0003'			 THEN '000000008'
+			WHEN product_code IN ('501','502','503','000Y') THEN 
+	   CASE WHEN REVERSE(SUBSTRING(REVERSE(item),1,4)) IN ('_ГР1', '_НД1','_НЭ1') THEN '000000003' 
+			ELSE '000000005' 
+	   END
+			WHEN product_code = '500' THEN '000000001'
+			ELSE '000000003'
+	   END AS ВидНоменклатуры
+	  ,CASE WHEN product_code IN ('0001','0002') THEN 'Ложь'
+			WHEN product_code = '0003'			 THEN 'Ложь'
+			WHEN product_code IN ('501','502','503','000Y') THEN 
+	   CASE WHEN REVERSE(SUBSTRING(REVERSE(item),1,4)) IN ('_ГР1', '_НД1','_НЭ1') THEN 'Ложь' 
+			ELSE 'Истина' 
+	   END
+			WHEN product_code = '500' THEN 'Ложь'
+			ELSE 'Ложь'
+	   END AS Услуга
+	  ,'Загружен из SL' AS Комментарий
+	  ,@GUID
+	  ,@Flag
+FROM dbo.RPZ_Scribe_NomenklatureView WHERE item = @Item
+/*==============================================================*/
+/*=============Заполнение истории Номенклатура==================*/
+INSERT INTO dbo.RPZ_Integrated (rpz_NameIns,rpz_status,rpz_Guid,rpz_Numb)
+SELECT	'Номенклатура'
+		,'Выгружен в 1C'
+		,@GUID
+		,SUBSTRING(ISNULL(Parent,'')+';'+ISNULL(Kod,'')+';'+ISNULL(NomenklGroup,'')+';'+ISNULL(NameDescription,'')+';'+
+		ISNULL(FullNameDescription,'')+';'+ISNULL(BaseUnit,'')+';'+ISNULL(Tax_Code,'')+';'+ISNULL(WeightKoeffic,'')+';'+
+		ISNULL(ViewNomenkl,'')+';'+ISNULL(Service,'')+';'+ISNULL(action,'')+';'+CAST(CreateDate AS NVARCHAR(30)),1,4000)
+FROM dbo.RPZ_Scribe_SpravNomenklature WHERE Kod = @Item AND GUID = @GUID
+/*===============================================================*/
+/*===========Справочник "ЕдиницыИзмерения"======================*/
+INSERT INTO dbo.RPZ_Scribe_UnitMetering (Nomenclature,Kod,Name,Unit,Koefficient,GUID,action)
+SELECT CASE WHEN product_code IN ('501','502','503') THEN item
+			WHEN REVERSE(SUBSTRING(REVERSE(description),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(item),4,LEN(item))) 
+			ELSE item
+	   END AS Номенклатура
+	  ,CASE WHEN product_code IN ('501','502','503') THEN item
+			WHEN REVERSE(SUBSTRING(REVERSE(description),1,3)) = '_СН' THEN REVERSE(SUBSTRING(REVERSE(item),4,LEN(item))) 
+			ELSE item
+	   END AS Код
+	  ,u_m AS Наименование
+	  ,OKEI_code AS ЕдиницаПоКлассификатору
+	  ,'1' AS Коэффициент
+	  ,@GUID
+	  ,@Flag
+FROM dbo.RPZ_Scribe_NomenklatureView WHERE item = @Item
+/*==============================================================*/
+/*==============Заполнение истории ЕдиницыИзмерения=============*/
+INSERT INTO dbo.RPZ_Integrated (rpz_NameIns,rpz_status,rpz_Guid,rpz_Numb)
+SELECT	'ЕдиницыИзмерения'
+		,'Выгружен в 1C'
+		,@GUID
+		,SUBSTRING(ISNULL(Nomenclature,'')+';'+ISNULL(Kod,'')+';'+ISNULL(Name,'')+';'+ISNULL(Unit,'')+';'+ISNULL(Koefficient,'')+';'+ISNULL(action,'')+';'+CAST(CreateDate AS NVARCHAR(30)),1,4000)
+FROM dbo.RPZ_Scribe_UnitMetering WHERE Kod = @Item AND GUID = @GUID
+/*===============================================================*/
